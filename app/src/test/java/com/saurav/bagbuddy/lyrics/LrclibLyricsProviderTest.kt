@@ -67,6 +67,15 @@ class LrclibLyricsProviderTest {
         assertEquals(listOf(1_250L, 4_500L), result.lines.map { it.startMs })
         assertTrue(result.lines.all { it.endMs == null && it.words.isEmpty() })
         assertEquals(LyricsSyncLevel.LINE, SyncLevelDetector.detect(result))
+        assertEquals(
+            listOf(LyricsSyncLevel.LINE, LyricsSyncLevel.PLAIN),
+            SyncLevelDetector.supportedLevels(result)
+        )
+        val frame = LyricsSyncEngine().frameAt(result, 1_300L)
+        assertEquals(LyricsSyncLevel.LINE, frame.syncLevel)
+        assertEquals("First line", frame.currentLine?.text)
+        assertNull(frame.activeWordIndex)
+        assertNull(frame.activeSyllableIndex)
         assertEquals("88", result.song.id)
     }
 

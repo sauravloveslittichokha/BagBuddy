@@ -29,8 +29,9 @@ object LyricsTrackMatcher {
         val requestedDuration = request.durationMs.takeIf { it > 0L }
         val candidateDuration = candidate.durationMs.takeIf { it > 0L }
         if (requestedDuration != null && candidateDuration != null) {
-            val allowedDifference = maxOf(10_000L, requestedDuration / 20L)
-            if (abs(requestedDuration - candidateDuration) > allowedDifference) return false
+            if (abs(requestedDuration - candidateDuration) > MAX_DURATION_DIFFERENCE_MS) {
+                return false
+            }
         }
 
         val requestedAlbum = meaningful(request.album)
@@ -54,4 +55,6 @@ object LyricsTrackMatcher {
             .replace(Regex("[^\\p{L}\\p{N}]+"), " ")
             .trim()
             .replace(Regex("\\s+"), " ")
+
+    private const val MAX_DURATION_DIFFERENCE_MS = 2_000L
 }

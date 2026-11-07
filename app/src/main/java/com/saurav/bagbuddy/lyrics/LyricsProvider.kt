@@ -4,6 +4,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.google.gson.JsonSyntaxException
 import com.saurav.bagbuddy.data.LyricLine
+import com.saurav.bagbuddy.data.LyricsSourceInfo
 import com.saurav.bagbuddy.data.LyricsTrack
 import com.saurav.bagbuddy.data.Song
 import kotlinx.coroutines.Dispatchers
@@ -20,6 +21,8 @@ import java.util.TimeZone
 
 interface LyricsProvider {
     val providerId: String
+    val capabilities: LyricsProviderCapabilities
+        get() = LyricsProviderCapabilities.LINE_ONLY
 
     /**
      * Returns normalized source lyrics or null when the provider has no match.
@@ -33,6 +36,8 @@ class LyricsProviderNotConfiguredException(providerId: String) :
 
 class LiriQoLyricsProvider : LyricsProvider {
     override val providerId: String = "LiriQo"
+    override val capabilities: LyricsProviderCapabilities =
+        LyricsProviderCapabilities.LINE_AND_WORD
 
     override suspend fun fetchLyrics(song: Song): LyricsTrack? {
         throw LyricsProviderNotConfiguredException(providerId)
@@ -60,6 +65,8 @@ class LrclibLyricsProvider(
     }
 
     override val providerId: String = "LRCLIB"
+    override val capabilities: LyricsProviderCapabilities =
+        LyricsProviderCapabilities.LINE_ONLY
 
     @Volatile private var blockedUntilNanos: Long? = null
 
@@ -134,19 +141,23 @@ class LrclibLyricsProvider(
             ?.let { (it * 1_000.0).toLong() }
             ?: 0L
         val resultSong = Song(
-            id = record.stringOrNull("id") ?: "lrclib",
+            id = record.get("id")
+                ?.takeUnless { it.isJsonNull || !it.isJsonPrimitive }
+                ?.asString ?: "lrclib",
             title = title,
             artist = artist,
             album = record.stringOrNull("albumName").orEmpty(),
             durationMs = durationMs,
             artworkEmoji = song.artworkEmoji
         )
+        val sourceInfo = LyricsSourceInfo(providerId = providerId)
 
         val syncedLyrics = record.stringOrNull("syncedLyrics").orEmpty()
         val plainLyrics = record.stringOrNull("plainLyrics").orEmpty()
         val timedTrack = syncedLyrics.takeIf(String::isNotBlank)
             ?.let { parser.parseLrc(resultSong, it) }
             ?.takeIf { it.lines.isNotEmpty() }
+            ?.copy(sourceInfo = sourceInfo)
         val plainTrack = plainLyrics.takeIf(String::isNotBlank)
             ?.let { text ->
                 LyricsTrack(
@@ -155,7 +166,8 @@ class LrclibLyricsProvider(
                         .map(String::trim)
                         .filter(String::isNotEmpty)
                         .map(::LyricLine)
-                        .toList()
+                        .toList(),
+                    sourceInfo = sourceInfo
                 )
             }
 
@@ -195,7 +207,8 @@ class LrclibLyricsProvider(
     }
 
     private fun JsonObject.stringOrNull(name: String): String? =
-        get(name)?.takeUnless { it.isJsonNull || !it.isJsonPrimitive }?.asString
+        get(name)?.takeUnless { it.isJsonNull || !it.isJsonPrimitive }
+            ?.asJsonPrimitive?.takeIf { it.isString }?.asString
 
     private fun JsonObject.numberOrNull(name: String): Double? =
         get(name)?.takeUnless { it.isJsonNull || !it.isJsonPrimitive }
@@ -290,7 +303,7 @@ open class LyricsHttpException(
 )
 
 class LyricsRateLimitException(retryAfterSeconds: Long) :
-    LyricsHttpException(    429, retryAfterSeconds)
+    LyricsHttpException(429, retryAfterSeconds)
 
 class LyricsResponseException(
     message: String,

@@ -6,9 +6,9 @@ The adaptive timing engine remains offline-first and does not invent timing data
 
 1. `LyricsRepository` requires a usable title and artist; placeholder media-session metadata is treated as missing.
 2. The repository checks the persistent cache first, then tries `LyricsProvider` implementations in order.
-3. `LyricsTrackMatcher` requires normalized title and artist equality, rejects clearly incompatible durations, and uses album agreement as an additional matching signal. Rejected results are not displayed or cached.
+3. `LyricsTrackMatcher` requires normalized title and artist equality, rejects duration differences greater than LRCLIB's documented ±2-second matching window, and uses album agreement as an additional matching signal. Rejected results are not displayed or cached.
 4. The repository normalizes accepted lyrics and caches successful matches only. Its explicit results are `Found`, `NotFound`, `InvalidMatch`, `ProviderError`, and `MissingMetadata`.
-5. The Compose simulator displays provider lyrics only for a verified match; otherwise it preserves matching bundled sample lyrics or explains why lyrics are unavailable. It shows `SAMPLE LYRICS`, `PROVIDER LYRICS`, or `CACHED LYRICS`, with loading and retry states.
+5. The Compose simulator displays provider lyrics only for a verified match; otherwise it preserves matching bundled sample lyrics or explains why lyrics are unavailable. It shows an animated three-dot indicator only while the request is in progress, then reports not-found, invalid-match, missing-metadata, or provider-error states with retry. Before the first timed line, it shows the next lyric instead of a stale “Waiting for lyrics” placeholder.
 6. `SharedPreferencesLyricsCache` keeps successful normalized results on-device for later offline lookup. Cache contents are not encrypted. Cache failures are surfaced rather than reported as successful persistence.
 7. `LyricsParser` preserves valid source timestamps and clears invalid or incomplete interval ends. Its LRC parser reads line start tags only; it does not create line ends, word times, or syllable times.
 8. `SyncLevelDetector` checks completeness, non-negative times, chronological order, overlap, and parent containment before offering a timed mode.
@@ -24,6 +24,44 @@ Automatic priority is `SYLLABLE`, `WORD`, `LINE`, then `PLAIN`.
 - **PLAIN** is always available, including for empty or untimed lyrics. It displays the first lines without suggesting playback synchronization.
 
 A requested mode that is not supported falls back to the most detailed mode the source actually supports. Invalid intervals (negative starts, end at/before start, out-of-order or overlapping intervals) do not qualify for that timing level. No duration is split to derive word or syllable times.
+
+## Provider capabilities and selection
+
+Providers declare possible timing capabilities (`LINE`, `WORD`, `SYLLABLE`) as
+search hints only. These declarations do not enable a sync mode. Each normalized
+result is independently checked by `SyncLevelDetector`, and the repository
+selects the result with the best valid timing data: `SYLLABLE`, then `WORD`,
+then `LINE`, then `PLAIN`. Ties retain provider order; a valid cached result is
+kept on a tie. Invalid, incomplete, out-of-order, or overlapping intervals
+cannot improve a result's rank.
+
+The cache is returned without network work only when its detected level is at
+least as detailed as the best capability advertised by all configured
+providers. Otherwise providers are queried and the best validated candidate is
+cached. This lets a future word-timing provider improve a cached LRCLIB line
+result without causing repeat requests when the cache is already as detailed as
+the configured sources.
+
+`LyricsTrack.sourceInfo` retains the adapter ID and optional provider,
+upstream-provider, and source labels when present. LRCLIB results identify
+LRCLIB; LiriQo parsing preserves its documented `provider`,
+`upstreamProvider`, and `lyricsSource` fields. These labels are attribution
+metadata, not evidence that a timing level is supported.
+
+### LiriQo preparation
+
+`LiriQoLyricsResponseParser` parses the documented JSON `metadata`, `tracks`,
+`timed`, and `words` fields. It preserves supplied millisecond values and
+selects the best candidate based on validated intervals; response-level
+`syncLevel` or capability labels are ignored. The parser does not infer
+syllables, and the current adapter remains unconfigured with no network
+transport. Word/syllable source rights and attribution terms must be clarified
+before enabling network use. `LiriQoLyricsProvider` is intentionally disabled.
+
+SYLLABLE is available only when actual syllable objects with complete valid
+intervals exist in a normalized track. The current LiriQo normalized response
+parser consumes documented word timing only, so an API `syncLevel` claim of
+`syllable` cannot activate syllable highlighting.
 
 ## Providers
 
@@ -46,4 +84,4 @@ Run the local JVM suite from the `BagBuddy` project folder:
 ./gradlew :app:testDebugUnitTest
 ```
 
-Tests cover timing priority, incomplete and malformed timestamps, LRC parsing without fabricated timestamps, playback highlighting, empty lyrics, provider fallback/failure behavior, normalized matching, invalid-match rejection, persistent-cache behavior through a fake cache, offline lookup, presentation states, LRCLIB request construction and response parsing, timeout/error mapping, 404 handling, 429 backoff, and line/plain timestamp preservation. Tests use fake HTTP transport: live LRCLIB access and real-device behavior are not verified.
+Tests cover timing priority, incomplete and malformed timestamps, LRC parsing without fabricated timestamps, playback highlighting, empty lyrics, provider fallback/failure behavior, normalized matching and LRCLIB's ±2-second duration match window, invalid-match rejection, persistent-cache behavior through a fake cache, offline lookup, loading/success/not-found/error/retry presentation transitions, LRCLIB request construction and response parsing, timeout/error mapping, 404 handling, 429 backoff, and explicit LINE-only detection/highlighting for LRC. Tests use fake HTTP transport: live LRCLIB access and real-device behavior are not verified.

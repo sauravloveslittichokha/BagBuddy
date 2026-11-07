@@ -43,7 +43,13 @@ class LyricsRepositoryPhase4Test {
         assertFalse(
             LyricsTrackMatcher.matches(
                 request,
-                correctTrack.song.copy(durationMs = 260_000L)
+                correctTrack.song.copy(durationMs = 182_001L)
+            )
+        )
+        assertTrue(
+            LyricsTrackMatcher.matches(
+                request,
+                correctTrack.song.copy(durationMs = 182_000L)
             )
         )
     }
@@ -187,6 +193,65 @@ class LyricsRepositoryPhase4Test {
         assertTrue(fallback.message.contains("not configured"))
         assertEquals(LyricsDisplaySource.PROVIDER, providerLyrics.source)
         assertEquals("PROVIDER LYRICS", providerLyrics.source.label)
+    }
+
+    @Test
+    fun presentationMovesFromLoadingToNotFoundAndErrorWithoutStayingLoading() {
+        val loading = LyricsPresentationState.loading(sampleTrack = null)
+        val notFound = LyricsPresentationState.fromResult(
+            LyricsLookupResult.NotFound,
+            sampleTrack = null
+        )
+        val error = LyricsPresentationState.fromResult(
+            LyricsLookupResult.ProviderError(
+                listOf(ProviderFailure("LRCLIB", "service unavailable", httpStatusCode = 503))
+            ),
+            sampleTrack = null
+        )
+        val unexpected = LyricsPresentationState.unexpectedFailure(
+            sampleTrack = null,
+            IllegalStateException("unexpected failure")
+        )
+
+        assertEquals(LyricsLoadStatus.LOADING, loading.status)
+        assertEquals(LyricsDisplaySource.NONE, loading.source)
+        assertEquals(LyricsLoadStatus.NOT_FOUND, notFound.status)
+        assertTrue(notFound.message.contains("No provider lyrics"))
+        assertEquals(LyricsDisplaySource.NONE, notFound.source)
+        assertEquals(LyricsLoadStatus.PROVIDER_ERROR, error.status)
+        assertTrue(error.message.contains("retry"))
+        assertEquals(LyricsLoadStatus.PROVIDER_ERROR, unexpected.status)
+        assertFalse(unexpected.message.contains("Looking for lyrics"))
+    }
+
+    @Test
+    fun retryCanRecoverFromProviderFailureAndReachesSuccessState() = runBlocking {
+        var attempts = 0
+        val flakyProvider = provider("retry-provider") {
+            attempts++
+            if (attempts == 1) throw IllegalStateException("temporary error")
+            correctTrack
+        }
+        val repository = LyricsRepository(
+            providers = listOf(flakyProvider),
+            cache = InMemoryLyricsCache()
+        )
+
+        val firstState = LyricsPresentationState.fromResult(
+            repository.findLyrics(request),
+            sampleTrack = null
+        )
+        val retryLoading = LyricsPresentationState.loading(sampleTrack = null)
+        val retryState = LyricsPresentationState.fromResult(
+            repository.findLyrics(request),
+            sampleTrack = null
+        )
+
+        assertEquals(LyricsLoadStatus.PROVIDER_ERROR, firstState.status)
+        assertEquals(LyricsLoadStatus.LOADING, retryLoading.status)
+        assertEquals(LyricsLoadStatus.FOUND, retryState.status)
+        assertEquals(LyricsDisplaySource.PROVIDER, retryState.source)
+        assertEquals(2, attempts)
     }
 
     private fun provider(

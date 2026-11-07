@@ -7,6 +7,7 @@ Bag Buddy is an Android app and virtual simulator for a future music-and-pixel-p
 - AMOLED-inspired Jetpack Compose simulator and animated pixel pet.
 - Local mock playback with play/pause, skip, seek, and sample lyrics.
 - Adaptive lyric detail based only on timestamps actually present in the source data.
+- Multi-provider capability declarations with per-result timing validation and quality-aware selection; LiriQo response parsing is prepared, but its network provider remains disabled pending rights and attribution clarification.
 - Lyrics lookup states, strict track matching, persistent successful-result caching, and retry UI.
 - LRCLIB lyrics lookup with exact metadata matching, line/plain parsing, and timeout/rate-limit handling. LiriQo remains unconfigured.
 - Optional live media-session title, artist, album, artwork, playback status, and position when Android exposes them.

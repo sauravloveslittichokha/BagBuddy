@@ -4,6 +4,8 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.StartOffset
+import androidx.compose.animation.core.StartOffsetType
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -41,9 +43,9 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -153,8 +155,14 @@ fun BagBuddyScreen(mediaSessionRepository: MediaSessionRepository) {
         retryLyrics
     ) {
         lyricsState = LyricsPresentationState.loading(sampleTrack)
-        val result = lyricsRepository.findLyrics(track.song)
-        lyricsState = LyricsPresentationState.fromResult(result, sampleTrack)
+        try {
+            val result = lyricsRepository.findLyrics(track.song)
+            lyricsState = LyricsPresentationState.fromResult(result, sampleTrack)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            lyricsState = LyricsPresentationState.unexpectedFailure(sampleTrack, failure)
+        }
     }
     val lyricsTrack = track.copy(lines = lyricsState.track?.lines.orEmpty())
     val positionMs = if (isLive) mediaSession.positionMs else playback.positionMs
@@ -394,7 +402,7 @@ private fun DevicePreview(
                 playbackSource == PlaybackSource.LIVE_MEDIA_SESSION
             })
             PixelPet()
-            LyricsPreview(track, lyricsFrame, lyricsState.source)
+            LyricsPreview(track, lyricsFrame, lyricsState)
             ProgressPreview(progress, positionMs, track.song.durationMs)
         }
     }
@@ -526,7 +534,7 @@ private fun DrawScope.drawPixelCat() {
 private fun LyricsPreview(
     track: LyricsTrack,
     frame: LyricsFrame,
-    source: LyricsDisplaySource
+    lyricsState: LyricsPresentationState
 ) {
     Column(
         modifier = Modifier.fillMaxWidth()
@@ -536,7 +544,7 @@ private fun LyricsPreview(
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(
-                text = source.label,
+                text = lyricsState.source.label,
                 color = BagBuddyMuted,
                 fontSize = 8.sp,
                 letterSpacing = 1.2.sp
@@ -550,25 +558,61 @@ private fun LyricsPreview(
             )
         }
         Spacer(Modifier.height(7.dp))
-        Text(
-            text = frame.currentLine?.let {
-                highlightedLyric(it, frame.currentLineIndex ?: 0, frame)
-            } ?: AnnotatedString(
-                if (track.lines.isEmpty()) "Lyrics unavailable" else "Waiting for lyrics"
-            ),
-            color = BagBuddyText,
-            fontSize = 17.sp,
-            lineHeight = 22.sp,
-            fontWeight = FontWeight.SemiBold,
-            maxLines = 2,
-            overflow = TextOverflow.Ellipsis
-        )
+        when {
+            lyricsState.status == LyricsLoadStatus.LOADING -> LyricsLoadingIndicator()
+            track.lines.isEmpty() ->
+                Text(
+                    text = lyricsState.emptyCardMessage(),
+                    color = BagBuddyMuted,
+                    fontSize = 14.sp,
+                    lineHeight = 19.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            frame.currentLine != null -> Text(
+                text = highlightedLyric(
+                    frame.currentLine,
+                    frame.currentLineIndex ?: 0,
+                    frame
+                ),
+                color = BagBuddyText,
+                fontSize = 17.sp,
+                lineHeight = 22.sp,
+                fontWeight = FontWeight.SemiBold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+            frame.nextLine != null -> Column {
+                Text(
+                    "UP NEXT",
+                    color = BagBuddyMuted,
+                    fontSize = 8.sp,
+                    letterSpacing = 1.1.sp
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    frame.nextLine.text,
+                    color = BagBuddyText,
+                    fontSize = 15.sp,
+                    lineHeight = 20.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            else -> Text(
+                "Lyrics finished",
+                color = BagBuddyMuted,
+                fontSize = 14.sp
+            )
+        }
         Spacer(Modifier.height(7.dp))
         Text(
-            text = frame.nextLine?.text ?: if (track.lines.isEmpty()) {
-                "No lyrics available"
-            } else {
-                "End of lyrics"
+            text = when {
+                lyricsState.status == LyricsLoadStatus.LOADING -> " "
+                track.lines.isEmpty() -> " "
+                frame.currentLine != null -> frame.nextLine?.text ?: "End of lyrics"
+                frame.nextLine != null -> "Lyrics are synced to playback"
+                else -> "End of lyrics"
             },
             color = BagBuddyMuted,
             fontSize = 11.sp,
@@ -576,6 +620,51 @@ private fun LyricsPreview(
             overflow = TextOverflow.Ellipsis
         )
     }
+}
+
+@Composable
+private fun LyricsLoadingIndicator() {
+    val transition = rememberInfiniteTransition(label = "lyrics-loading")
+    Row(
+        modifier = Modifier.semantics {
+            contentDescription = "Loading lyrics"
+        },
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        repeat(3) { index ->
+            val alpha by transition.animateFloat(
+                initialValue = 0.25f,
+                targetValue = 1f,
+                animationSpec = infiniteRepeatable(
+                    animation = tween(700, easing = FastOutSlowInEasing),
+                    repeatMode = RepeatMode.Reverse,
+                    initialStartOffset = StartOffset(
+                        offsetMillis = index * 160,
+                        offsetType = StartOffsetType.Delay
+                    )
+                ),
+                label = "lyrics-loading-dot-$index"
+            )
+            Box(
+                modifier = Modifier
+                    .size(7.dp)
+                    .clip(CircleShape)
+                    .background(BagBuddyAccent.copy(alpha = alpha))
+            )
+        }
+        Spacer(Modifier.width(4.dp))
+        Text("Searching lyrics", color = BagBuddyMuted, fontSize = 12.sp)
+    }
+}
+
+private fun LyricsPresentationState.emptyCardMessage(): String = when (status) {
+    LyricsLoadStatus.LOADING -> "Searching lyrics"
+    LyricsLoadStatus.FOUND -> "No lyric lines were returned."
+    LyricsLoadStatus.NOT_FOUND -> "No lyrics found for this track."
+    LyricsLoadStatus.INVALID_MATCH -> "A matching lyrics result was not verified."
+    LyricsLoadStatus.PROVIDER_ERROR -> "Lyrics could not be loaded."
+    LyricsLoadStatus.MISSING_METADATA -> "Track title or artist is unavailable."
 }
 
 @Composable

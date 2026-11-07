@@ -89,6 +89,17 @@ data class LyricsPresentationState(
             )
         }
 
+        fun unexpectedFailure(
+            sampleTrack: LyricsTrack?,
+            failure: Exception
+        ): LyricsPresentationState = fallback(
+            LyricsLoadStatus.PROVIDER_ERROR,
+            sampleTrack,
+            failure.message?.takeIf(String::isNotBlank)
+                ?.let { "Lyrics lookup failed: $it" }
+                ?: "Lyrics lookup failed. You can retry."
+        )
+
         private fun fallback(
             status: LyricsLoadStatus,
             sampleTrack: LyricsTrack?,
