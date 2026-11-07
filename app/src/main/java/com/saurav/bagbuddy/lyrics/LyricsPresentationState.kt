@@ -65,11 +65,17 @@ data class LyricsPresentationState(
             is LyricsLookupResult.ProviderError -> {
                 val onlyConfigurationErrors =
                     result.failures.isNotEmpty() && result.failures.all { it.configurationMissing }
+                val rateLimitFailure = result.failures.firstOrNull {
+                    it.httpStatusCode == 429
+                }
                 fallback(
                     LyricsLoadStatus.PROVIDER_ERROR,
                     sampleTrack,
                     if (onlyConfigurationErrors) {
                         "Lyrics providers are not configured. See the setup instructions."
+                    } else if (rateLimitFailure != null) {
+                        "LRCLIB rate limited this request. Try again in " +
+                            "${rateLimitFailure.retryAfterSeconds ?: 60} seconds."
                     } else {
                         "Lyrics lookup failed. You can retry when a provider is available."
                     }

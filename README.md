@@ -8,7 +8,7 @@ Bag Buddy is an Android app and virtual simulator for a future music-and-pixel-p
 - Local mock playback with play/pause, skip, seek, and sample lyrics.
 - Adaptive lyric detail based only on timestamps actually present in the source data.
 - Lyrics lookup states, strict track matching, persistent successful-result caching, and retry UI.
-- Modular LiriQo and LRCLIB provider contracts; live network providers remain unconfigured.
+- LRCLIB lyrics lookup with exact metadata matching, line/plain parsing, and timeout/rate-limit handling. LiriQo remains unconfigured.
 - Optional live media-session title, artist, album, artwork, playback status, and position when Android exposes them.
 - Mock playback remains active as a separate fallback when access is denied or no media session is active.
 
@@ -50,8 +50,8 @@ The app reads media-session metadata only. It does not get Apple Music's native 
 - `app/src/main/java/com/saurav/bagbuddy/simulator`: Compose simulator UI.
 - `app/src/test`: local JVM tests for playback and lyric behavior.
 
-See [docs/LYRICS_ENGINE.md](docs/LYRICS_ENGINE.md) for timing rules, provider verification, lookup behavior, and the steps needed to enable LRCLIB.
+See [docs/LYRICS_ENGINE.md](docs/LYRICS_ENGINE.md) for timing rules, verified provider details, lookup behavior, and known limitations.
 
 ## Not included yet
 
-Lyrics-provider network requests, BLE, and ESP32 firmware are intentionally not enabled. Phase 4's provider-independent lookup, matching, cache, UI states, and fake-provider tests are implemented, but no real provider requests are made. LRCLIB requires a truthful project URL or contact email in its client-identification header; Bag Buddy is not published yet, so the provider stays unconfigured. LiriQo also remains unconfigured because its published API host did not resolve during verification. The app does not claim live provider connectivity.
+LRCLIB network requests are implemented against its documented API. Unit tests use fake HTTP responses; live LRCLIB behavior has not been tested or verified. LiriQo remains unconfigured because its published API host did not resolve during verification. BLE and ESP32 firmware are future work.

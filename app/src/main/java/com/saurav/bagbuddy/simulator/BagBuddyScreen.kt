@@ -88,7 +88,6 @@ import com.saurav.bagbuddy.lyrics.LyricsPresentationState
 import com.saurav.bagbuddy.lyrics.LyricsRepository
 import com.saurav.bagbuddy.lyrics.LyricsTrackMatcher
 import com.saurav.bagbuddy.lyrics.LyricsSyncEngine
-import com.saurav.bagbuddy.lyrics.LiriQoLyricsProvider
 import com.saurav.bagbuddy.lyrics.LrclibLyricsProvider
 import com.saurav.bagbuddy.lyrics.SharedPreferencesLyricsCache
 import com.saurav.bagbuddy.lyrics.SyncLevelDetector
@@ -106,7 +105,7 @@ fun BagBuddyScreen(mediaSessionRepository: MediaSessionRepository) {
     val context = LocalContext.current
     val lyricsRepository = remember(context) {
         LyricsRepository(
-            providers = listOf(LiriQoLyricsProvider(), LrclibLyricsProvider()),
+            providers = listOf(LrclibLyricsProvider()),
             cache = SharedPreferencesLyricsCache(context.applicationContext)
         )
     }

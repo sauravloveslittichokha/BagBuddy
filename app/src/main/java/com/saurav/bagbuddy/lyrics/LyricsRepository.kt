@@ -33,7 +33,9 @@ enum class LyricsResultOrigin {
 data class ProviderFailure(
     val providerId: String,
     val message: String,
-    val configurationMissing: Boolean = false
+    val configurationMissing: Boolean = false,
+    val httpStatusCode: Int? = null,
+    val retryAfterSeconds: Long? = null
 )
 
 class LyricsRepository(
@@ -105,6 +107,13 @@ class LyricsRepository(
                     providerId = provider.providerId,
                     message = notConfigured.message.orEmpty(),
                     configurationMissing = true
+                )
+            } catch (httpFailure: LyricsHttpException) {
+                failures += ProviderFailure(
+                    providerId = provider.providerId,
+                    message = httpFailure.message.orEmpty(),
+                    httpStatusCode = httpFailure.statusCode,
+                    retryAfterSeconds = httpFailure.retryAfterSeconds
                 )
             } catch (failure: Exception) {
                 failures += ProviderFailure(

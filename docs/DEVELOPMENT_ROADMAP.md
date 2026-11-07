@@ -16,11 +16,11 @@ Not yet device-verified: actual metadata availability from Apple Music or other 
 
 ## Phase 4 — Lyrics provider integration
 
-Partially implemented: provider-independent result states, exact title/artist matching with album/duration validation, persistent successful-result cache, offline cache lookup, sample fallback, loading/error/retry UI, and fake-provider tests. Real network requests are intentionally disabled.
+Implemented: LRCLIB HTTP adapter using its documented endpoint, explicit lookup states, exact title/artist matching with album/duration validation, persistent successful-result cache, offline cache lookup, sample fallback, loading/error/retry UI, and fake-transport tests. Live LRCLIB behavior has not yet been verified on a device or with an end-to-end network test.
 
-LRCLIB's official API documentation and a documented `/api/get` example were verified, including query fields, response schema, approximate rate limits, and `Retry-After` guidance. Its documentation requires an identified `User-Agent` with a project URL or email. Bag Buddy is not published and no contact email was provided, so LRCLIB remains unconfigured. Before enabling it, add a truthful project URL or project contact email and implement/test the HTTP adapter against the verified API contract.
+LRCLIB's official API documentation and a documented `/api/get` example were verified, including query fields, response schema, approximate rate limits, and `Retry-After` guidance. The adapter sends the provided public project URL in its identified `User-Agent`, uses timeouts, handles HTTP status and `Retry-After`, and maps source line-synced or plain lyrics only. LRCLIB `lyricsfile` word timing is not parsed.
 
-LiriQo's repository README documents a public API, but the documented API host did not resolve during verification, so its adapter remains unconfigured. No real provider response or network fallback is claimed. See [LYRICS_ENGINE.md](LYRICS_ENGINE.md) for research sources, limitations, and setup.
+LiriQo's repository README documents a public API, but the documented API host did not resolve during verification, so its adapter remains unconfigured. The unit suite uses fake transport; no live provider response is claimed. See [LYRICS_ENGINE.md](LYRICS_ENGINE.md) for research sources and limitations.
 
 ## Phase 5 — BLE communication architecture
 
