@@ -10,6 +10,35 @@ object SyncLevelDetector {
     fun detect(track: LyricsTrack): LyricsSyncLevel =
         supportedLevels(track).first()
 
+    fun wordTimingRejectionReason(track: LyricsTrack): String? =
+        wordTimingRejectionReason(track.lines)
+
+    private fun wordTimingRejectionReason(lines: List<LyricLine>): String? {
+        if (lines.isEmpty()) return "no_lines"
+        if (lines.any { it.words.isEmpty() }) return "line_without_word_segments"
+
+        val words = lines.flatMap(LyricLine::words)
+        if (words.any { !isValidStart(it.startMs) }) return "word_start_missing_or_invalid"
+        if (words.any { word ->
+                val start = word.startMs
+                val end = word.endMs
+                start == null || end == null || end <= start
+            }
+        ) return "word_end_missing_or_invalid"
+        if (!orderedWithoutOverlap(words.map { it.startMs to it.endMs })) {
+            return "word_intervals_unordered_or_overlapping"
+        }
+        if (lines.any { line ->
+                line.words.any { word ->
+                    (line.startMs != null && word.startMs!! < line.startMs) ||
+                        (line.endMs != null && word.endMs!! > line.endMs)
+                }
+            }
+        ) return "word_outside_line_interval"
+
+        return null
+    }
+
     fun supportedLevels(track: LyricsTrack): List<LyricsSyncLevel> {
         val lines = track.lines
         if (lines.isEmpty()) return listOf(LyricsSyncLevel.PLAIN)
@@ -36,19 +65,8 @@ object SyncLevelDetector {
             )
 
     private fun supportsWords(lines: List<LyricLine>, words: List<LyricWord>): Boolean {
-        if (words.isEmpty() || lines.any { it.words.isEmpty() }) return false
-        if (!orderedWithoutOverlap(words.map { it.startMs to it.endMs })) return false
-
-        return lines.all { line ->
-            val lineStart = line.startMs
-            val lineEnd = line.endMs
-            line.words.all { word ->
-                val start = word.startMs!!
-                val end = word.endMs!!
-                (lineStart == null || start >= lineStart) &&
-                    (lineEnd == null || end <= lineEnd)
-            }
-        }
+        if (words.isEmpty()) return false
+        return wordTimingRejectionReason(lines) == null
     }
 
     private fun supportsSyllables(

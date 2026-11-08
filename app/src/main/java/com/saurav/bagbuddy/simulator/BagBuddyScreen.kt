@@ -84,6 +84,7 @@ import com.saurav.bagbuddy.companion.NotificationAccessStatus
 import com.saurav.bagbuddy.companion.PlaybackSource
 import com.saurav.bagbuddy.companion.PlaybackSourceSelector
 import com.saurav.bagbuddy.lyrics.LyricsDisplaySource
+import com.saurav.bagbuddy.lyrics.AndroidLyricsDiagnostics
 import com.saurav.bagbuddy.lyrics.LyricsFrame
 import com.saurav.bagbuddy.lyrics.LyricsLoadStatus
 import com.saurav.bagbuddy.lyrics.LyricsPresentationState
@@ -105,10 +106,12 @@ fun BagBuddyScreen(mediaSessionRepository: MediaSessionRepository) {
     val player = remember { MockMusicPlayer() }
     val lyricsEngine = remember { LyricsSyncEngine() }
     val context = LocalContext.current
-    val lyricsRepository = remember(context) {
+    val lyricsDiagnostics = remember { AndroidLyricsDiagnostics() }
+    val lyricsRepository = remember(context, lyricsDiagnostics) {
         LyricsRepository(
-            providers = listOf(LrclibLyricsProvider()),
-            cache = SharedPreferencesLyricsCache(context.applicationContext)
+            providers = listOf(LrclibLyricsProvider(diagnostics = lyricsDiagnostics)),
+            cache = SharedPreferencesLyricsCache(context.applicationContext),
+            diagnostics = lyricsDiagnostics
         )
     }
     val playback by player.state.collectAsState()

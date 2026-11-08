@@ -7,9 +7,9 @@ Bag Buddy is an Android app and virtual simulator for a future music-and-pixel-p
 - AMOLED-inspired Jetpack Compose simulator and animated pixel pet.
 - Local mock playback with play/pause, skip, seek, and sample lyrics.
 - Adaptive lyric detail based only on timestamps actually present in the source data.
-- Multi-provider capability declarations with per-result timing validation and quality-aware selection; LiriQo response parsing is prepared, but its network provider remains disabled pending rights and attribution clarification.
+- Multi-provider capability declarations with per-result timing validation and quality-aware selection. LRCLIB Lyricsfile records can provide genuine word timing; LiriQo response parsing is prepared, but its network provider remains disabled pending rights and attribution clarification.
 - Lyrics lookup states, strict track matching, persistent successful-result caching, and retry UI.
-- LRCLIB lyrics lookup with exact metadata matching, line/plain parsing, and timeout/rate-limit handling. LiriQo remains unconfigured.
+- LRCLIB lyrics lookup with exact metadata matching, Lyricsfile word timing when complete source intervals are present, LINE/PLAIN fallback, and timeout/rate-limit handling. LiriQo remains unconfigured.
 - Optional live media-session title, artist, album, artwork, playback status, and position when Android exposes them.
 - Mock playback remains active as a separate fallback when access is denied or no media session is active.
 
@@ -55,4 +55,4 @@ See [docs/LYRICS_ENGINE.md](docs/LYRICS_ENGINE.md) for timing rules, verified pr
 
 ## Not included yet
 
-LRCLIB network requests are implemented against its documented API. Unit tests use fake HTTP responses; live LRCLIB behavior has not been tested or verified. LiriQo remains unconfigured because its published API host did not resolve during verification. BLE and ESP32 firmware are future work.
+LRCLIB network requests are implemented against its documented API. Physical-device testing confirms LRCLIB lyrics load and LINE synchronization works; the new Lyricsfile WORD parser is covered by synthetic fixtures, but a live word-synced LRCLIB record has not yet been confirmed on-device. LRCLIB does not document a separate lyric-text redistribution license. LiriQo's current API documentation and word-timing response format are available, but its network adapter remains disabled until lyrics usage rights and required attribution are clarified. BLE and ESP32 firmware are future work.

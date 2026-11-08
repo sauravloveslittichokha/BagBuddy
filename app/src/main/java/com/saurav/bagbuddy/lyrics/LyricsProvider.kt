@@ -47,6 +47,7 @@ class LiriQoLyricsProvider : LyricsProvider {
 class LrclibLyricsProvider(
     private val transport: LyricsHttpTransport = UrlConnectionLyricsHttpTransport(),
     private val parser: LyricsParser = LyricsParser(),
+    private val lyricsFileParser: LyricsFileParser = LyricsFileParser(),
     private val userAgent: String = DEFAULT_USER_AGENT,
     private val connectTimeoutMs: Int = DEFAULT_TIMEOUT_MS,
     private val readTimeoutMs: Int = DEFAULT_TIMEOUT_MS,
@@ -56,7 +57,8 @@ class LrclibLyricsProvider(
             MAX_RETRY_JITTER_SECONDS
         )
         Random.nextLong(maxJitter + 1L)
-    }
+    },
+    private val diagnostics: LyricsDiagnostics = LyricsDiagnostics.NONE
 ) : LyricsProvider {
     init {
         require(userAgent.isNotBlank()) { "LRCLIB requires a client-identifying User-Agent." }
@@ -66,12 +68,17 @@ class LrclibLyricsProvider(
 
     override val providerId: String = "LRCLIB"
     override val capabilities: LyricsProviderCapabilities =
-        LyricsProviderCapabilities.LINE_ONLY
+        LyricsProviderCapabilities.LINE_AND_WORD
 
     @Volatile private var blockedUntilNanos: Long? = null
 
     override suspend fun fetchLyrics(song: Song): LyricsTrack? {
-        if (!LyricsTrackMatcher.hasSearchMetadata(song)) return null
+        val requestIdentity =
+            "title=${song.title.asDiagnosticValue()} artist=${song.artist.asDiagnosticValue()}"
+        if (!LyricsTrackMatcher.hasSearchMetadata(song)) {
+            diagnostics.record("LRCLIB status=missing_search_metadata $requestIdentity")
+            return null
+        }
 
         val nowNanos = System.nanoTime()
         val remainingCooldownNanos = blockedUntilNanos?.minus(nowNanos) ?: 0L
@@ -84,16 +91,30 @@ class LrclibLyricsProvider(
         }
 
         val url = buildRequestUrl(song)
-        val response = transport.get(
-            url = url,
-            userAgent = userAgent,
-            connectTimeoutMs = connectTimeoutMs,
-            readTimeoutMs = readTimeoutMs
-        )
+        diagnostics.record("LRCLIB request status=started $requestIdentity")
+        val response = try {
+            transport.get(
+                url = url,
+                userAgent = userAgent,
+                connectTimeoutMs = connectTimeoutMs,
+                readTimeoutMs = readTimeoutMs
+            )
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (failure: Exception) {
+            diagnostics.record(
+                "LRCLIB request status=transport_error type=${failure::class.simpleName}"
+            )
+            throw failure
+        }
+        diagnostics.record("LRCLIB response http_status=${response.statusCode}")
 
         when (response.statusCode) {
             HttpURLConnection.HTTP_OK -> Unit
-            HttpURLConnection.HTTP_NOT_FOUND -> return null
+            HttpURLConnection.HTTP_NOT_FOUND -> {
+                diagnostics.record("LRCLIB result status=not_found")
+                return null
+            }
             HTTP_TOO_MANY_REQUESTS -> {
                 val retryAfterSeconds = parseRetryAfter(response.retryAfter)
                     .takeIf { it > 0L } ?: DEFAULT_RATE_LIMIT_COOLDOWN_SECONDS
@@ -110,21 +131,32 @@ class LrclibLyricsProvider(
                     cooldownSeconds * NANOS_PER_SECOND
                 }
                 blockedUntilNanos = System.nanoTime() + cooldownNanos
+                diagnostics.record(
+                    "LRCLIB result status=rate_limited retry_after_seconds=$retryAfterSeconds"
+                )
                 throw LyricsRateLimitException(retryAfterSeconds)
             }
-            else -> throw LyricsHttpException(
-                statusCode = response.statusCode,
-                retryAfterSeconds = response.retryAfter?.let(::parseRetryAfter)?.takeIf { it > 0L }
-            )
+            else -> {
+                diagnostics.record("LRCLIB result status=http_error code=${response.statusCode}")
+                throw LyricsHttpException(
+                    statusCode = response.statusCode,
+                    retryAfterSeconds = response.retryAfter?.let(::parseRetryAfter)?.takeIf { it > 0L }
+                )
+            }
         }
 
         val record = try {
             JsonParser.parseString(response.body).takeIf { it.isJsonObject }?.asJsonObject
         } catch (failure: JsonSyntaxException) {
+            diagnostics.record("LRCLIB result status=invalid_json")
             throw LyricsResponseException("LRCLIB returned invalid JSON.", failure)
-        } ?: throw LyricsResponseException("LRCLIB returned an unexpected response.")
+        } ?: run {
+            diagnostics.record("LRCLIB result status=unexpected_json_shape")
+            throw LyricsResponseException("LRCLIB returned an unexpected response.")
+        }
 
         if (record.has("error") && !record.get("error").isJsonNull) {
+            diagnostics.record("LRCLIB result status=provider_error")
             throw LyricsResponseException(
                 "LRCLIB returned an error: ${record.get("error")}"
             )
@@ -133,8 +165,19 @@ class LrclibLyricsProvider(
         val title = record.stringOrNull("trackName")?.trim().orEmpty()
         val artist = record.stringOrNull("artistName")?.trim().orEmpty()
         if (title.isEmpty() || artist.isEmpty()) {
+            diagnostics.record("LRCLIB result status=missing_track_metadata")
             throw LyricsResponseException("LRCLIB response is missing track or artist metadata.")
         }
+
+        val hasWordSync = record.booleanOrNull("hasWordSync")
+        val lyricsFileValue = record.get("lyricsfile")
+        val lyricsFile = record.stringOrNull("lyricsfile")
+        diagnostics.record(
+            "LRCLIB record title=${title.asDiagnosticValue()} " +
+                "artist=${artist.asDiagnosticValue()} hasWordSync=${hasWordSync ?: "missing"} " +
+                "lyricsfilePresent=${lyricsFileValue != null && !lyricsFileValue.isJsonNull} " +
+                "lyricsfileString=${lyricsFile != null} lyricsfileChars=${lyricsFile?.length ?: 0}"
+        )
 
         val durationMs = record.numberOrNull("duration")
             ?.takeIf { it > 0.0 && it <= 3_600.0 }
@@ -152,6 +195,22 @@ class LrclibLyricsProvider(
         )
         val sourceInfo = LyricsSourceInfo(providerId = providerId)
 
+        val lyricsFileReport = lyricsFile
+            ?.takeIf(String::isNotBlank)
+            ?.let { lyricsFileParser.parseWithReport(resultSong, it) }
+        if (lyricsFileReport != null) {
+            diagnostics.record(
+                "LRCLIB lyricsfile parse=${lyricsFileReport.reason} " +
+                    "lines=${lyricsFileReport.lineCount} words=${lyricsFileReport.wordCount} " +
+                    "fullyTimedWords=${lyricsFileReport.fullyTimedWordCount} " +
+                    "wordTextMismatches=${lyricsFileReport.wordTextMismatchCount}"
+            )
+        } else {
+            diagnostics.record("LRCLIB lyricsfile parse=not_available")
+        }
+        val lyricsFileTrack = lyricsFileReport?.track
+            ?.takeIf { it.lines.isNotEmpty() }
+            ?.copy(sourceInfo = sourceInfo)
         val syncedLyrics = record.stringOrNull("syncedLyrics").orEmpty()
         val plainLyrics = record.stringOrNull("plainLyrics").orEmpty()
         val timedTrack = syncedLyrics.takeIf(String::isNotBlank)
@@ -171,7 +230,23 @@ class LrclibLyricsProvider(
                 )
             }
 
-        return timedTrack ?: plainTrack
+        val selected = when {
+            lyricsFileTrack != null -> "lyricsfile" to lyricsFileTrack
+            timedTrack != null -> "syncedLyrics" to timedTrack
+            plainTrack != null -> "plainLyrics" to plainTrack
+            else -> null
+        }
+        if (selected == null) {
+            diagnostics.record("LRCLIB result status=no_lyrics_payload")
+            return null
+        }
+        val (selectedSource, selectedTrack) = selected
+        diagnostics.record(
+            "LRCLIB selected source=$selectedSource " +
+                "sync=${SyncLevelDetector.detect(selectedTrack)} " +
+                "wordTiming=${SyncLevelDetector.wordTimingRejectionReason(selectedTrack) ?: "valid"}"
+        )
+        return selectedTrack
     }
 
     private fun buildRequestUrl(song: Song): String {
@@ -213,6 +288,10 @@ class LrclibLyricsProvider(
     private fun JsonObject.numberOrNull(name: String): Double? =
         get(name)?.takeUnless { it.isJsonNull || !it.isJsonPrimitive }
             ?.asJsonPrimitive?.takeIf { it.isNumber }?.asDouble
+
+    private fun JsonObject.booleanOrNull(name: String): Boolean? =
+        get(name)?.takeUnless { it.isJsonNull || !it.isJsonPrimitive }
+            ?.asJsonPrimitive?.takeIf { it.isBoolean }?.asBoolean
 
     private companion object {
         const val BASE_URL = "https://lrclib.net"

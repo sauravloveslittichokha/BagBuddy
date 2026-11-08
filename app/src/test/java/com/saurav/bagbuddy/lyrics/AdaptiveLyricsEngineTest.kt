@@ -63,6 +63,10 @@ class AdaptiveLyricsEngineTest {
 
         assertEquals(LyricsSyncLevel.LINE, SyncLevelDetector.detect(source))
         assertNull(source.lines.single().words.last().endMs)
+        assertEquals(
+            "word_end_missing_or_invalid",
+            SyncLevelDetector.wordTimingRejectionReason(source)
+        )
     }
 
     @Test
@@ -82,6 +86,14 @@ class AdaptiveLyricsEngineTest {
         assertEquals(LyricsSyncLevel.LINE, SyncLevelDetector.detect(invalidEnd))
         assertEquals(LyricsSyncLevel.LINE, SyncLevelDetector.detect(overlappingWords))
         assertEquals(LyricsSyncLevel.PLAIN, SyncLevelDetector.detect(negativeLine))
+        assertEquals(
+            "word_end_missing_or_invalid",
+            SyncLevelDetector.wordTimingRejectionReason(invalidEnd)
+        )
+        assertEquals(
+            "word_intervals_unordered_or_overlapping",
+            SyncLevelDetector.wordTimingRejectionReason(overlappingWords)
+        )
     }
 
     @Test

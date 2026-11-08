@@ -11,7 +11,8 @@ import java.security.MessageDigest
 
 data class CachedLyrics(
     val track: LyricsTrack,
-    val providerId: String
+    val providerId: String,
+    val checkedProviderCapabilities: Map<String, Int>? = null
 )
 
 interface LyricsCache {

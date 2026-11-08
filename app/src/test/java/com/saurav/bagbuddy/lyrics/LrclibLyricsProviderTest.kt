@@ -80,6 +80,233 @@ class LrclibLyricsProviderTest {
     }
 
     @Test
+    fun parsesSyntheticLyricsfileWordIntervalsAndUsesThemForPlaybackHighlighting() = runBlocking {
+        val result = provider(
+            response = {
+                LyricsHttpResponse(
+                    200,
+                    """
+                        {
+                          "id": 89,
+                          "trackName": "Night & Day",
+                          "artistName": "A Person",
+                          "duration": 180,
+                          "hasWordSync": false,
+                          "syncedLyrics": "[00:01.00]Synthetic phrase",
+                          "lyricsfile": "version: '1.0'\nmetadata:\n  title: 'Night & Day'\n  artist: 'A Person'\nlines:\n  - text: 'Synthetic phrase'\n    start_ms: 1000\n    end_ms: 3000\n    words:\n      - text: 'Synthetic '\n        start_ms: 1000\n        end_ms: 1900\n      - text: phrase\n        start_ms: 1900\n        end_ms: 3000\n"
+                        }
+                    """.trimIndent()
+                )
+            }
+        ).fetchLyrics(song)!!
+
+        assertEquals(LyricsSyncLevel.WORD, SyncLevelDetector.detect(result))
+        assertEquals("LRCLIB", result.sourceInfo?.providerId)
+        assertEquals(listOf(1_000L, 1_900L), result.lines.single().words.map { it.startMs })
+        assertEquals(listOf(1_900L, 3_000L), result.lines.single().words.map { it.endMs })
+        val frame = LyricsSyncEngine().frameAt(result, 2_000L)
+        assertEquals(LyricsSyncLevel.WORD, frame.syncLevel)
+        assertEquals(1, frame.activeWordIndex)
+    }
+
+    @Test
+    fun trailingEmptyLyricsfileLineDoesNotDiscardWordTiming() = runBlocking {
+        val result = provider(
+            response = {
+                LyricsHttpResponse(
+                    200,
+                    """
+                        {
+                          "trackName": "Night & Day",
+                          "artistName": "A Person",
+                          "hasWordSync": true,
+                          "lyricsfile": "version: '1.0'\nmetadata: {title: 'Night & Day', artist: 'A Person'}\nlines:\n  - text: 'First phrase'\n    start_ms: 1000\n    end_ms: 3000\n    words:\n      - text: 'First '\n        start_ms: 1000\n        end_ms: 1900\n      - text: phrase\n        start_ms: 1900\n        end_ms: 3000\n  - text: ''\n    start_ms: 3000\n"
+                        }
+                    """.trimIndent()
+                )
+            }
+        ).fetchLyrics(song)!!
+
+        assertEquals(LyricsSyncLevel.WORD, SyncLevelDetector.detect(result))
+        assertEquals(1, result.lines.size)
+        assertEquals(listOf(1_000L, 1_900L), result.lines.single().words.map { it.startMs })
+    }
+
+    @Test
+    fun wordTokensWithoutWhitespaceAreAlignedToTheOriginalLineText() = runBlocking {
+        val result = provider(
+            response = {
+                LyricsHttpResponse(
+                    200,
+                    """
+                        {
+                          "trackName": "Night & Day",
+                          "artistName": "A Person",
+                          "hasWordSync": true,
+                          "lyricsfile": "version: '1.0'\nmetadata: {title: 'Night & Day', artist: 'A Person'}\nlines:\n  - text: 'First phrase'\n    start_ms: 1000\n    end_ms: 3000\n    words:\n      - text: First\n        start_ms: 1000\n        end_ms: 1900\n      - text: phrase\n        start_ms: 1900\n        end_ms: 3000\n"
+                        }
+                    """.trimIndent()
+                )
+            }
+        ).fetchLyrics(song)!!
+
+        assertEquals(LyricsSyncLevel.WORD, SyncLevelDetector.detect(result))
+        assertEquals("First phrase", result.lines.single().words.joinToString("") { it.text })
+        assertEquals(1_900L, result.lines.single().words[1].startMs)
+    }
+
+    @Test
+    fun diagnosticsReportProviderAndTimingStagesWithoutLoggingLyrics() = runBlocking {
+        val diagnostics = mutableListOf<String>()
+        val provider = provider(
+            diagnostics = LyricsDiagnostics(diagnostics::add),
+            response = {
+                LyricsHttpResponse(
+                    200,
+                    """
+                        {
+                          "trackName": "Night & Day",
+                          "artistName": "A Person",
+                          "hasWordSync": true,
+                          "lyricsfile": "version: '1.0'\nmetadata: {title: 'Night & Day', artist: 'A Person'}\nlines:\n  - text: 'Synthetic phrase'\n    start_ms: 1000\n    end_ms: 3000\n    words:\n      - text: 'Synthetic '\n        start_ms: 1000\n        end_ms: 1900\n      - text: phrase\n        start_ms: 1900\n        end_ms: 3000\n"
+                        }
+                    """.trimIndent()
+                )
+            }
+        )
+
+        val lookup = LyricsRepository(
+            providers = listOf(provider),
+            cache = InMemoryLyricsCache(),
+            diagnostics = LyricsDiagnostics(diagnostics::add)
+        ).findLyrics(song)
+        val result = (lookup as LyricsLookupResult.Found).track
+
+        assertEquals(LyricsSyncLevel.WORD, SyncLevelDetector.detect(result))
+        assertTrue(diagnostics.any { "hasWordSync=true" in it && "lyricsfilePresent=true" in it })
+        assertTrue(diagnostics.any { "fullyTimedWords=2" in it })
+        assertTrue(diagnostics.any { "selected source=lyricsfile sync=WORD" in it })
+        assertTrue(diagnostics.any { "lyrics selection provider=LRCLIB" in it && "sync=WORD" in it })
+        assertTrue(diagnostics.none { "Synthetic phrase" in it })
+    }
+
+    @Test
+    fun lyricsfileWithoutWordArraysIsReportedAsLineOnlyAtProviderAndRepository() = runBlocking {
+        val diagnostics = mutableListOf<String>()
+        val provider = provider(
+            diagnostics = LyricsDiagnostics(diagnostics::add),
+            response = {
+                LyricsHttpResponse(
+                    200,
+                    """
+                        {
+                          "trackName": "Night & Day",
+                          "artistName": "A Person",
+                          "hasWordSync": false,
+                          "lyricsfile": "version: '1.0'\nmetadata: {title: 'Night & Day', artist: 'A Person'}\nlines:\n  - text: 'Synthetic line'\n    start_ms: 1000\n    end_ms: 2000\n"
+                        }
+                    """.trimIndent()
+                )
+            }
+        )
+
+        val lookup = LyricsRepository(
+            providers = listOf(provider),
+            cache = InMemoryLyricsCache(),
+            diagnostics = LyricsDiagnostics(diagnostics::add)
+        ).findLyrics(song)
+        val result = (lookup as LyricsLookupResult.Found).track
+
+        assertEquals(LyricsSyncLevel.LINE, SyncLevelDetector.detect(result))
+        assertEquals(
+            "line_without_word_segments",
+            SyncLevelDetector.wordTimingRejectionReason(result)
+        )
+        assertTrue(diagnostics.any {
+            "hasWordSync=false" in it && "lyricsfilePresent=true" in it
+        })
+        assertTrue(diagnostics.any {
+            "parse=parsed_without_word_segments" in it && "words=0" in it
+        })
+        assertTrue(diagnostics.any {
+            "selected source=lyricsfile sync=LINE" in it &&
+                "wordTiming=line_without_word_segments" in it
+        })
+    }
+
+    @Test
+    fun incompleteWordIntervalsFallBackToLineSynchronization() = runBlocking {
+        val result = provider(
+            response = {
+                LyricsHttpResponse(
+                    200,
+                    """
+                        {
+                          "trackName": "Night & Day",
+                          "artistName": "A Person",
+                          "duration": 180,
+                          "hasWordSync": true,
+                          "syncedLyrics": "[00:01.00]Synthetic phrase",
+                          "lyricsfile": "version: '1.0'\nmetadata: {title: 'Night & Day', artist: 'A Person'}\nlines:\n  - text: 'Synthetic phrase'\n    start_ms: 1000\n    words:\n      - text: 'Synthetic '\n        start_ms: 1000\n        end_ms: 1900\n      - text: phrase\n        start_ms: 1900\n"
+                        }
+                    """.trimIndent()
+                )
+            }
+        ).fetchLyrics(song)!!
+
+        assertEquals(LyricsSyncLevel.LINE, SyncLevelDetector.detect(result))
+        assertEquals(null, result.lines.single().words.last().endMs)
+    }
+
+    @Test
+    fun incompleteWordCoverageFallsBackToLineSynchronization() = runBlocking {
+        val result = provider(
+            response = {
+                LyricsHttpResponse(
+                    200,
+                    """
+                        {
+                          "trackName": "Night & Day",
+                          "artistName": "A Person",
+                          "duration": 180,
+                          "hasWordSync": true,
+                          "syncedLyrics": "[00:01.00]Synthetic phrase",
+                          "lyricsfile": "version: '1.0'\nmetadata: {title: 'Night & Day', artist: 'A Person'}\nlines:\n  - text: 'Synthetic phrase'\n    start_ms: 1000\n    words:\n      - text: Synthetic\n        start_ms: 1000\n        end_ms: 1900\n"
+                        }
+                    """.trimIndent()
+                )
+            }
+        ).fetchLyrics(song)!!
+
+        assertEquals(LyricsSyncLevel.LINE, SyncLevelDetector.detect(result))
+        assertTrue(result.lines.single().words.isEmpty())
+    }
+
+    @Test
+    fun malformedLyricsfileFallsBackToDocumentedLrcWithoutInventingWords() = runBlocking {
+        val result = provider(
+            response = {
+                LyricsHttpResponse(
+                    200,
+                    """
+                        {
+                          "trackName": "Night & Day",
+                          "artistName": "A Person",
+                          "duration": 180,
+                          "hasWordSync": true,
+                          "syncedLyrics": "[00:01.00]Synthetic phrase",
+                          "lyricsfile": "version: '1.0'\nlines:\n  - text: [unclosed"
+                        }
+                    """.trimIndent()
+                )
+            }
+        ).fetchLyrics(song)!!
+
+        assertEquals(LyricsSyncLevel.LINE, SyncLevelDetector.detect(result))
+        assertTrue(result.lines.single().words.isEmpty())
+    }
+
+    @Test
     fun plainLyricsAreUsedWhenSyncedLyricsAreUnavailable() = runBlocking {
         val provider = provider(
             response = {
@@ -232,7 +459,8 @@ class LrclibLyricsProviderTest {
 
     private fun provider(
         response: suspend () -> LyricsHttpResponse,
-        onRequest: (String, String, Int, Int) -> Unit = { _, _, _, _ -> }
+        onRequest: (String, String, Int, Int) -> Unit = { _, _, _, _ -> },
+        diagnostics: LyricsDiagnostics = LyricsDiagnostics.NONE
     ) = LrclibLyricsProvider(
         transport = LyricsHttpTransport { url, userAgent, connectTimeoutMs, readTimeoutMs ->
             onRequest(url, userAgent, connectTimeoutMs, readTimeoutMs)
@@ -240,6 +468,7 @@ class LrclibLyricsProviderTest {
         },
         userAgent = "Bag Buddy/1.0 (https://github.com/sauravloveslittichokha/BagBuddy)",
         connectTimeoutMs = 4_000,
-        readTimeoutMs = 5_000
+        readTimeoutMs = 5_000,
+        diagnostics = diagnostics
     )
 }
